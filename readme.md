@@ -27,18 +27,17 @@ Abacus2Api是一个基于FastAPI构建的API代理服务，它提供了一个统
 ## 🔧 系统架构
 
 ```mermaid
-graph TD
-    Client[客户端应用] -->|API请求| A[Abacus2Api服务]
-    A -->|解析请求| B[请求处理]
-    B -->|转换为Abacus格式| C[消息格式化]
-    C --> E[流式请求处理]
-    E --> F[流式响应生成]
-    F --> G[SSE事件发送]
-    G --> H[返回客户端]
+flowchart TD
+    A[客户端应用] -->|API请求| B
+    B[Abacus2Api] -->|处理请求| C
+    C[消息格式化] --> D
+    D[流式处理] --> E
+    E[响应生成] --> F
+    F[返回客户端]
     
-    style A fill:#1e88e5,stroke:#1e88e5,color:white
-    style E fill:#43a047,stroke:#43a047,color:white
-    style G fill:#e53935,stroke:#e53935,color:white
+    style B fill:#1e88e5,color:white
+    style D fill:#43a047,color:white
+    style F fill:#e53935,color:white
 ```
 
 ## 💻 安装指南
@@ -128,18 +127,34 @@ POST /v1/chat/completions
 
 ```mermaid
 sequenceDiagram
-    participant Client as 客户端
-    participant API as Abacus2Api
-    participant LLM as 语言模型服务
+    participant C as 客户端
+    participant A as Abacus2Api
+    participant L as 语言模型
     
-    Client->>API: 发送聊天请求
-    API->>API: 验证和处理请求
-    API->>LLM: 转发格式化的请求
-    LLM-->>API: 流式返回生成内容
-    loop 每个响应块
-        API-->>Client: 发送SSE事件
+    C->>A: 发送请求
+    A->>A: 处理请求
+    A->>L: 转发请求
+    L-->>A: 流式响应
+    loop 响应块
+        A-->>C: 发送事件
     end
 ```
+
+## 🔍 故障排除
+
+常见问题:
+
+1. **连接超时**
+   - 检查网络连接
+   - 确认LLM服务端点是否可访问
+
+2. **认证错误**
+   - 验证API密钥是否有效
+   - 确保Authorization格式正确
+
+3. **请求格式错误**
+   - 遵循API文档中的请求格式
+   - 检查必填字段
 
 ## 📄 许可证
 
