@@ -1,25 +1,3 @@
-MODEL_MAPPING = {
-    "gpt-4o-mini-abacus": "OPENAI_GPT4O_MINI",
-    "claude-3.5-sonnet-abacus": "CLAUDE_V3_5_SONNET",
-    "claude-3.7-sonnet-abacus": "CLAUDE_V3_7_SONNET", 
-    "claude-3.7-sonnet-thinking-abacus": "CLAUDE_V3_7_SONNET_THINKING", 
-    "o3-mini-abacus": "OPENAI_O3_MINI",
-    "o3-mini-high-abacus": "OPENAI_O3_MINI_HIGH",
-    "o1-mini-abacus": "OPENAI_O1_MINI",
-    "deepseek-r1-abacus": "DEEPSEEK_R1",
-    "gemini-2-pro-abacus": "GEMINI_2_PRO",
-    "gemini-2-flash-thinking-abacus": "GEMINI_2_FLASH_THINKING",
-    "gemini-2-flash-abacus": "GEMINI_2_FLASH",
-    "gemini-1.5-pro-abacus": "GEMINI_1_5_PRO",
-    "xai-grok-abacus": "XAI_GROK",
-    "deepseek-v3-abacus": "DEEPSEEK_V3",
-    "llama3-1-405b-abacus": "LLAMA3_1_405B",
-    "gpt-4o-abacus": "OPENAI_GPT4O",
-    "gpt-4o-2024-08-06-abacus": "OPENAI_GPT4O", 
-    "gpt-3.5-turbo-abacus": "OPENAI_O3_MINI",  
-    "gpt-3.5-turbo-16k-abacus": "OPENAI_O3_MINI_HIGH" 
-}
-
 # Abacus API Python实现
 
 这是一个使用FastAPI实现的Abacus API代理，功能与Go版本完全一致。它支持处理OpenAI风格的API请求，并将其转发到Abacus API，同时支持流式和非流式响应。
