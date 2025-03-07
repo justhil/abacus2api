@@ -108,6 +108,11 @@ print(json.dumps(response.json(), indent=2))
 4. 在任何包含"cookie"或"auth"的自定义头中传递
 
 最灵活的方式是直接在请求体JSON中包含cookie字段，特别是当cookie内容较长或包含特殊字符时。
+### 会话创建需要抓包！
+
+抓包该文件获取env文件中对应id填入
+![image](https://github.com/user-attachments/assets/195a69f9-6dfe-4375-a6f7-100e5de20095)
+
 
 ## 支持的模型映射
 
