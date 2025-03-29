@@ -3,4 +3,7 @@ uvicorn==0.22.0
 httpx==0.24.1
 pydantic==1.10.8
 python-multipart==0.0.6
-python-dotenv
+python-dotenv==1.0.0
+orjson==3.9.7
+uuid==1.30
+asyncio==3.4.3
