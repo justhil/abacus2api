@@ -11,6 +11,10 @@
 - 支持流式和非流式响应
 - 自动创建会话
 - 处理cookies和必要的请求头
+- 高性能HTTP连接池和连接复用
+- 支持思维链（thinking）内容分离
+- 兼容Pydantic v1和v2版本
+- 每10分钟自动刷新会话令牌
 
 ## 安装
 
@@ -23,6 +27,22 @@ pip install -r requirements.txt
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## 配置说明
+
+系统支持以下环境变量配置：
+
+- `BASE_URL`: Abacus API基础URL，默认为"https://apps.abacus.ai"
+- `DEPLOYMENT_ID`: 部署ID
+- `EXTERNAL_APP_ID`: 外部应用ID
+- `MAX_CONCURRENT_REQUESTS`: 最大并发请求数，默认为30
+- `INITIAL_SESSION_TOKEN`: 初始会话令牌
+- `CONNECT_TIMEOUT`: 连接超时时间（秒），默认为30
+- `STREAM_TIMEOUT`: 流式响应超时时间（秒），默认为120
+- `MAX_RETRIES`: 最大重试次数，默认为3
+- `RETRY_DELAY`: 重试延迟（秒），默认为1.0
+- `HTTP_POOL_CONNECTIONS`: HTTP连接池最大连接数，默认为100
+- `HTTP_MAX_KEEPALIVE_CONNECTIONS`: HTTP最大保持连接数，默认为10
 
 ## 使用示例
 
@@ -100,7 +120,7 @@ print(json.dumps(response.json(), indent=2))
 
 ### Cookie传递方式
 
-本API支持以下几种方式传递Abacus cookie:
+本API需要从客户端获取Abacus cookie，不再支持通过环境变量设置默认cookie。支持以下几种方式传递Abacus cookie:
 
 1. 在请求头中使用标准Cookie头: `"Cookie": "your_cookie_here"`
 2. 在请求头中使用Bearer令牌: `"Authorization": "Bearer your_cookie_here"`
@@ -108,11 +128,8 @@ print(json.dumps(response.json(), indent=2))
 4. 在任何包含"cookie"或"auth"的自定义头中传递
 
 最灵活的方式是直接在请求体JSON中包含cookie字段，特别是当cookie内容较长或包含特殊字符时。
-### 会话创建需要抓包！
 
-抓包该文件获取env文件中对应id填入
-![image](https://github.com/user-attachments/assets/195a69f9-6dfe-4375-a6f7-100e5de20095)
-
+为确保系统正常运行，每次请求必须包含有效的Abacus cookie。系统会缓存和复用会话令牌，每10分钟自动刷新一次，以提高性能和降低Abacus服务器负载。
 
 ## 支持的模型映射
 
@@ -139,3 +156,19 @@ print(json.dumps(response.json(), indent=2))
 两种命名都会被正确映射到对应的Abacus模型。这种灵活性使得API既能兼容OpenAI的标准调用方式，又能明确指示此请求是针对Abacus平台的调用。
 
 推荐使用带`-abacus`后缀的模型名，以便在代码中清晰区分不同的API后端。
+
+## 性能优化
+
+本版本包含多项性能优化：
+
+1. **HTTP连接池和复用**：使用全局HTTP客户端和连接池，减少连接建立和TLS握手的开销
+2. **自动会话令牌刷新**：每10分钟自动刷新会话令牌，避免会话过期
+3. **JSON序列化优化**：可选使用orjson库提高JSON解析和序列化性能
+4. **思维链处理优化**：针对Claude模型的思维链内容进行专门处理
+5. **Pydantic兼容性**：兼容Pydantic v1和v2版本的API
+
+## 思维链功能
+
+当使用支持思维链的模型（如claude-3.7-sonnet-thinking-abacus）时，系统会自动识别思维链内容，并用`<think></think>`标签将其包围，使得客户端可以区分思维和实际输出内容。
+
+这对于需要分离模型思考过程和最终输出的应用非常有用。
