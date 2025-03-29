@@ -1,6 +1,6 @@
 # Abacus API Python实现
 
-这是一个使用FastAPI实现的Abacus API代理，功能与Go版本完全一致。它支持处理OpenAI风格的API请求，并将其转发到Abacus API，同时支持流式和非流式响应。
+这是一个使用FastAPI实现的Abacus API代理。它支持处理OpenAI风格的API请求，并将其转发到Abacus API，同时支持流式和非流式响应。
 
 ## 功能特点
 
