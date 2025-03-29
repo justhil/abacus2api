@@ -25,7 +25,7 @@ pip install -r requirements.txt
 ## 运行
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python main.py
 ```
 
 ## 配置说明
