@@ -60,8 +60,8 @@ SESSION_TIMEOUT = int(os.environ.get("SESSION_TIMEOUT", "3600"))  # 会话超时
 MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "50"))  # 最大并发请求数
 
 # 单账号配置
-DEPLOYMENT_ID = os.environ.get("DEPLOYMENT_ID", "23090466a")
-EXTERNAL_APP_ID = os.environ.get("EXTERNAL_APP_ID", "46456e1b4")
+DEPLOYMENT_ID = os.environ.get("DEPLOYMENT_ID", "")
+EXTERNAL_APP_ID = os.environ.get("EXTERNAL_APP_ID", "")
 NEW_CHAT_NAME = os.environ.get("NEW_CHAT_NAME", "New Chat")
 
 # 基础URL
@@ -232,21 +232,11 @@ async def lifespan(app: FastAPI):
 
     # 记录初始会话令牌
     initial_token = session_token_manager.get_token()
-    log_info(f"初始会话令牌: {initial_token[:20]}...")
+    if initial_token:
+        log_info(f"初始会话令牌: {initial_token[:20]}...")
+    else:
+        log_info("初始会话令牌未设置，等待客户端请求时使用其cookie获取")
     
-    # 启动时刷新一次会话令牌
-    try:
-        log_info("正在刷新会话令牌...")
-        new_token = await session_token_manager.fetch_new_token()
-        if new_token:
-            session_token_manager.session_token = new_token
-            session_token_manager.last_refresh_time = time.time()
-            log_info(f"成功刷新会话令牌: {new_token[:20]}...")
-        else:
-            log_warning("启动时刷新会话令牌失败，使用现有令牌")
-    except Exception as e:
-        log_error(f"启动时刷新会话令牌发生错误: {str(e)}", exc_info=True)
-
     yield
 
     # 应用关闭时执行
@@ -365,9 +355,9 @@ class ChatCompletionUsage(BaseModel):
 MODEL_MAPPING = {
     "gpt-4o-mini-abacus": "OPENAI_GPT4O_MINI",
     "claude-3.5-sonnet-abacus": "CLAUDE_V3_5_SONNET",
-    "claude-3-sonnet": "CLAUDE_V3_5_SONNET",  
-    "claude-3.7-sonnet-abacus": "CLAUDE_V3_7_SONNET",  
-    "claude-3.7-sonnet-thinking-abacus": "CLAUDE_V3_7_SONNET_THINKING", 
+    "claude-3-sonnet": "CLAUDE_V3_5_SONNET",  # 别名
+    "claude-3.7-sonnet-abacus": "CLAUDE_V3_7_SONNET",  # 新增
+    "claude-3.7-sonnet-thinking-abacus": "CLAUDE_V3_7_SONNET_THINKING",  # 新增
     "o3-mini-abacus": "OPENAI_O3_MINI",
     "o3-mini-high-abacus": "OPENAI_O3_MINI_HIGH",
     "o1-mini-abacus": "OPENAI_O1_MINI",
@@ -380,9 +370,9 @@ MODEL_MAPPING = {
     "deepseek-v3-abacus": "DEEPSEEK_V3",
     "llama3-1-405b-abacus": "LLAMA3_1_405B",
     "gpt-4o-abacus": "OPENAI_GPT4O",
-    "gpt-4o-2024-08-06-abacus": "OPENAI_GPT4O", 
-    "gpt-3.5-turbo-abacus": "OPENAI_O3_MINI", 
-    "QWQ_32B-abacus": "QWQ_32B", 
+    "gpt-4o-2024-08-06-abacus": "OPENAI_GPT4O",  # 别名
+    "gpt-3.5-turbo-abacus": "OPENAI_O3_MINI",  # 别名
+    "QWQ_32B-abacus": "QWQ_32B",  # 别名
     "GEMINI_2_5_PRO-abacus": "GEMINI_2_5_PRO",
     }
 
@@ -390,18 +380,32 @@ MODEL_MAPPING = {
 class SessionTokenManager:
     def __init__(self):
         # 从环境变量获取初始会话令牌
-        self.session_token = os.environ.get("INITIAL_SESSION_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDMyMTc0NTMsIm5iZiI6MTc0MzIxNzQ1MywiZXhwIjoxNzQzMjIxMDUzLCJpc3MiOiJodHRwczovL2FiYWN1cy5haS8iLCJpcCI6IjIzLjE3Mi40MC4xMzEiLCJ1c2VyX2lkIjoiMWY3OTA5ZTBhIiwidXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzQuMC4wLjAgU2FmYXJpLzUzNy4zNiBFZGcvMTM0LjAuMC4wIiwic2tpcF9pcF9jaGVjayI6ZmFsc2V9.UnDSnbi020jFbWE4pl8SCZPZwNCV6Z5C2nBXyPd-i8M")
+        self.session_token = os.environ.get("INITIAL_SESSION_TOKEN", "")
         self.last_refresh_time = time.time()
         self.refresh_interval = 10 * 60  # 10分钟刷新一次
         self.lock = asyncio.Lock()
-        self.cookie = os.environ.get("ABACUS_COOKIE", "")
+        self.cookie = ""  # 不再从环境变量获取cookie
+        self.last_used_cookie = ""  # 记录最后一次使用的cookie
 
     def get_token(self) -> str:
         """获取当前的会话令牌"""
         return self.session_token
 
-    async def refresh_token_if_needed(self) -> str:
+    # 更新当前使用的cookie
+    def update_cookie(self, cookie: str) -> None:
+        """更新当前使用的cookie"""
+        if cookie and cookie != self.last_used_cookie:
+            self.last_used_cookie = cookie
+            self.cookie = cookie
+            # 当cookie更新时，重置token刷新时间
+            self.last_refresh_time = 0  # 这将触发下次请求立即刷新token
+
+    async def refresh_token_if_needed(self, cookie: Optional[str] = None) -> str:
         """如果需要，刷新会话令牌"""
+        # 如果提供了新cookie，则更新
+        if cookie:
+            self.update_cookie(cookie)
+            
         current_time = time.time()
 
         # 如果距离上次刷新时间超过刷新间隔，则刷新令牌
@@ -426,7 +430,7 @@ class SessionTokenManager:
     async def fetch_new_token(self) -> Optional[str]:
         """从 Abacus API 获取新的会话令牌"""
         if not self.cookie:
-            log_warning("未设置 ABACUS_COOKIE 环境变量，无法刷新会话令牌")
+            log_warning("未设置cookie，无法刷新会话令牌")
             return None
 
         url = "https://apps.abacus.ai/api/v0/_getUserInfo"
@@ -521,7 +525,7 @@ async def get_headers(cookie: str, session_token: Optional[str] = None, url: Opt
     cookie = cookie.strip()
 
     # 使用会话令牌管理器获取令牌，如果提供了特定的令牌，则使用提供的令牌
-    token_to_use = session_token if session_token else await session_token_manager.refresh_token_if_needed()
+    token_to_use = session_token if session_token else await session_token_manager.refresh_token_if_needed(cookie)
 
     # 生成 Sentry 相关头部
     sentry_headers = generate_sentry_headers()
@@ -550,7 +554,7 @@ async def get_headers(cookie: str, session_token: Optional[str] = None, url: Opt
         "content-type": "text/plain;charset=UTF-8",
         "origin": "https://apps.abacus.ai",
         "priority": "u=1, i",
-        "referer": "https://apps.abacus.ai/chatllm/?appId=5552d82c8&convoId=1554f6f5cf",
+        "referer": f"https://apps.abacus.ai/chatllm/?appId={EXTERNAL_APP_ID}&convoId={DEPLOYMENT_ID}",
         "sec-ch-ua": "\"Chromium\";v=\"134\", \"Not:A-Brand\";v=\"24\", \"Microsoft Edge\";v=\"134\"",
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": "\"Windows\"",
@@ -713,7 +717,7 @@ def process_messages(messages: List[Message], previous_responses=None) -> str:
     log_debug(f"处理消息: 系统消息={bool(system_message)}, 历史消息数={len(conversation_history)}, 当前消息长度={len(current_message)}, 前面分段数量={1 if previous_responses else 0}")
     return full_message
 
-async def process_non_streaming_response(response: httpx.Response) -> Dict[str, Any]:
+async def process_non_streaming_response(response: httpx.Response) -> str:
     """处理非流式响应"""
     thinking_content = []
     output_content = []
@@ -761,17 +765,31 @@ async def process_non_streaming_response(response: httpx.Response) -> Dict[str, 
             log_warning(f"[{request_id}] 非流式-JSON解析错误: {str(e)}, 行内容: {line[:100]}...")
             continue
 
-    # 组装最终结果
-    thinking_text = "".join(thinking_content) if thinking_content else ""
-    output_text = "".join(output_content) if output_content else ""
+    # 组装最终内容
+    final_content = ""
 
-    log_info(f"[{request_id}] 非流式响应处理完成: 处理了{line_count}行, 思维链长度={len(thinking_text)}, 输出长度={len(output_text)}, 耗时={time.time() - start_time:.2f}秒")
-    
-    # 返回包含思维链和输出的字典
-    return {
-        "output": output_text,
-        "thinking": thinking_text
-    }
+    # 如果有思维链内容，添加思维链部分
+    if thinking_content:
+        final_content += "<think>" + "".join(thinking_content) + "</think>"
+        # 在思维链和输出之间添加换行
+        if output_content:
+            # 检查输出内容是否以代码块开始
+            first_output = output_content[0] if output_content else ""
+            starts_with_code_block = first_output.lstrip().startswith("```")
+
+            # 如果以代码块开始，确保有足够的换行
+            if starts_with_code_block:
+                final_content += "\n\n\n"  # 额外的换行以确保代码块格式正确
+                log_debug(f"[{request_id}] 非流式响应检测到代码块开始，添加额外换行")
+            else:
+                final_content += "\n\n"  # 标准换行
+
+    # 添加输出内容
+    if output_content:
+        final_content += "".join(output_content)
+
+    log_info(f"[{request_id}] 非流式响应处理完成: 处理了{line_count}行, 思维链长度={len(''.join(thinking_content))}, 输出长度={len(''.join(output_content))}, 耗时={time.time() - start_time:.2f}秒")
+    return final_content
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, chat_request: ChatRequest = None, background_tasks: BackgroundTasks = None):
@@ -1198,7 +1216,7 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
 
                         # 如果是长文本处理，保存当前分段的响应
                         if continuation_id:
-                            intermediate_results_store.store_response(continuation_id, final_content["output"])
+                            intermediate_results_store.store_response(continuation_id, final_content)
 
                             # 查看是否还有更多分段需要处理
                             if not intermediate_results_store.is_processing_complete(continuation_id):
@@ -1216,16 +1234,15 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                                             "index": 0,
                                             "message": {
                                                 "role": "assistant",
-                                                "content": final_content["output"],
-                                                "thinking": final_content["thinking"] if "thinking" in final_content else None
+                                                "content": final_content
                                             },
                                             "finish_reason": "length"  # 使用length表示因长度限制而截断
                                         }
                                     ],
                                     "usage": {
                                         "prompt_tokens": len(full_message) // 4,  # 粗略估计token数量
-                                        "completion_tokens": len(final_content["output"]) // 4,
-                                        "total_tokens": (len(full_message) + len(final_content["output"])) // 4
+                                        "completion_tokens": len(final_content) // 4,
+                                        "total_tokens": (len(full_message) + len(final_content)) // 4
                                     },
                                     "long_text_processing": {
                                         "completed": False,
@@ -1258,16 +1275,15 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                                     "index": 0,
                                     "message": {
                                         "role": "assistant",
-                                        "content": final_content["output"],
-                                        "thinking": final_content["thinking"] if "thinking" in final_content else None
+                                        "content": final_content
                                     },
                                     "finish_reason": "stop"
                                 }
                             ],
                             "usage": {
                                 "prompt_tokens": len(full_message) // 4,  # 粗略估计token数量
-                                "completion_tokens": len(final_content["output"]) // 4,
-                                "total_tokens": (len(full_message) + len(final_content["output"])) // 4
+                                "completion_tokens": len(final_content) // 4,
+                                "total_tokens": (len(full_message) + len(final_content)) // 4
                             }
                         }
 
@@ -1456,15 +1472,13 @@ async def generate_stream(request_id: str, cookie: str, abacus_request: AbacusRe
                                     # 如果从输出切换到思维链，需要发送思维链开始标记
                                     if not processing_thinking and not has_closed_thinking:
                                         if not has_sent_thinking_header:
-                                            # 不发送<think>标签作为内容，而是使用特殊标志
-                                            # 指示这是思维链的开始
                                             yield "data: " + json.dumps({
                                                 "id": request_id,
                                                 "object": "chat.completion.chunk",
                                                 "created": int(uuid.uuid1().time_low),
                                                 "model": model,
                                                 "choices": [{
-                                                    "delta": {"content": "", "thinking_start": True},
+                                                    "delta": {"content": "<think>"},
                                                     "index": 0,
                                                     "finish_reason": None
                                                 }]
@@ -1475,7 +1489,7 @@ async def generate_stream(request_id: str, cookie: str, abacus_request: AbacusRe
                                     thinking_content.append(segment)
                                     thinking_buffer += segment
 
-                                    # 发送思维链内容（如果缓冲区达到阈值），使用特殊字段
+                                    # 发送思维链内容（如果缓冲区达到阈值）
                                     current_time = time.time()
                                     if len(thinking_buffer) >= buffer_size_limit or current_time - last_flush_time >= buffer_time_limit:
                                         yield "data: " + json.dumps({
@@ -1484,7 +1498,7 @@ async def generate_stream(request_id: str, cookie: str, abacus_request: AbacusRe
                                             "created": int(uuid.uuid1().time_low),
                                             "model": model,
                                             "choices": [{
-                                                "delta": {"thinking_content": thinking_buffer, "content": ""},
+                                                "delta": {"content": thinking_buffer},
                                                 "index": 0,
                                                 "finish_reason": None
                                             }]
@@ -1503,21 +1517,21 @@ async def generate_stream(request_id: str, cookie: str, abacus_request: AbacusRe
                                             "created": int(uuid.uuid1().time_low),
                                             "model": model,
                                             "choices": [{
-                                                "delta": {"thinking_content": thinking_buffer, "content": ""},
+                                                "delta": {"content": thinking_buffer},
                                                 "index": 0,
                                                 "finish_reason": None
                                             }]
                                         }) + "\n\n"
                                         thinking_buffer = ""
 
-                                    # 发送思维链结束标记，使用特殊字段
+                                    # 发送思维链结束标记和换行
                                     yield "data: " + json.dumps({
                                         "id": request_id,
                                         "object": "chat.completion.chunk",
                                         "created": int(uuid.uuid1().time_low),
                                         "model": model,
                                         "choices": [{
-                                            "delta": {"content": "", "thinking_end": True},
+                                            "delta": {"content": "</think>\n\n"},
                                             "index": 0,
                                             "finish_reason": None
                                         }]
@@ -1525,7 +1539,7 @@ async def generate_stream(request_id: str, cookie: str, abacus_request: AbacusRe
                                     has_closed_thinking = True
                                     processing_thinking = False
 
-                                    # 添加一个小延迟，确保思维链结束和实际输出开始之间有分隔
+                                    # 添加一个小延迟，确保思维链结束和代码块开始之间有足够的分隔
                                     await asyncio.sleep(0.05)
 
                                 # 处理输出内容
@@ -2004,121 +2018,119 @@ async def generate_stream_with_long_text(
     current_section = "thinking"  # 可以是 "thinking" 或 "output"
 
     try:
-        # 使用全局HTTP客户端，提高连接复用和性能
-        async with http_client.stream(
-            "POST", 
-            request_url,
-            headers=headers,
-            content=json.dumps(get_model_dict(abacus_request))
-        ) as response:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("POST", request_url,
+                                     headers=headers,
+                                     content=json.dumps(get_model_dict(abacus_request)),
+                                     timeout=STREAM_TIMEOUT) as response:
 
-            if response.status_code != 200:
-                log_error(f"[{request_id}] 流式请求失败: 状态码 {response.status_code}")
-                error_json = json.dumps({
-                    "error": {
-                        "message": f"流式请求失败: {response.status_code}",
-                        "type": "ServerError",
-                        "code": response.status_code
-                    }
-                })
-                yield f"data: {error_json}\n\n"
-                return
-
-            line_count = 0
-            start_time = time.time()
-
-            # 发送初始数据
-            if not first_frame_sent:
-                response_id = f"chatcmpl-{uuid.uuid4().hex}"
-                created = int(time.time())
-                init_data = {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model,
-                    "system_fingerprint": f"fp_{int(time.time())}_{uuid.uuid4().hex[:8]}",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"role": "assistant"},
-                            "finish_reason": None
+                if response.status_code != 200:
+                    log_error(f"[{request_id}] 流式请求失败: 状态码 {response.status_code}")
+                    error_json = json.dumps({
+                        "error": {
+                            "message": f"流式请求失败: {response.status_code}",
+                            "type": "ServerError",
+                            "code": response.status_code
                         }
-                    ],
-                    "long_text_processing": {
-                        "continuation_id": continuation_id,
-                        "current_segment": current_segment,
-                        "total_segments": total_segments
+                    })
+                    yield f"data: {error_json}\n\n"
+                    return
+
+                line_count = 0
+                start_time = time.time()
+
+                # 发送初始数据
+                if not first_frame_sent:
+                    response_id = f"chatcmpl-{uuid.uuid4().hex}"
+                    created = int(time.time())
+                    init_data = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "system_fingerprint": f"fp_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant"},
+                                "finish_reason": None
+                            }
+                        ],
+                        "long_text_processing": {
+                            "continuation_id": continuation_id,
+                            "current_segment": current_segment,
+                            "total_segments": total_segments
+                        }
                     }
-                }
-                yield f"data: {json.dumps(init_data)}\n\n"
-                first_frame_sent = True
+                    yield f"data: {json.dumps(init_data)}\n\n"
+                    first_frame_sent = True
 
-            async for line in response.aiter_lines():
-                line = line.strip()
-                if not line:
-                    continue
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
 
-                line_count += 1
-                try:
-                    data = json.loads(line)
+                    line_count += 1
+                    try:
+                        data = json.loads(line)
 
-                    # 处理不同类型的消息
-                    if is_thinking_message(data):
-                        # 思维链消息，收集但不实时流式输出
-                        if data.get("segment"):
-                            if isinstance(data.get("segment"), dict) and data["segment"].get("segment") is not None:
-                                thinking_content.append(data["segment"]["segment"])
-                            else:
-                                thinking_content.append(data["segment"])
-                        current_section = "thinking"
-                    elif is_normal_output(data):
-                        # 普通输出，实时流式输出并收集
-                        if data.get("segment"):
-                            chunk = data.get("segment", "")
-                            output_content.append(chunk)
+                        # 处理不同类型的消息
+                        if is_thinking_message(data):
+                            # 思维链消息，收集但不实时流式输出
+                            if data.get("segment"):
+                                if isinstance(data.get("segment"), dict) and data["segment"].get("segment") is not None:
+                                    thinking_content.append(data["segment"]["segment"])
+                                else:
+                                    thinking_content.append(data["segment"])
+                            current_section = "thinking"
+                        elif is_normal_output(data):
+                            # 普通输出，实时流式输出并收集
+                            if data.get("segment"):
+                                chunk = data.get("segment", "")
+                                output_content.append(chunk)
 
-                            # 创建OpenAI兼容的流式响应
-                            chunk_data = {
-                                "id": f"chatcmpl-{uuid.uuid4().hex}",
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": chunk},
-                                        "finish_reason": None
-                                    }
-                                ]
-                            }
+                                # 创建OpenAI兼容的流式响应
+                                chunk_data = {
+                                    "id": f"chatcmpl-{uuid.uuid4().hex}",
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": chunk},
+                                            "finish_reason": None
+                                        }
+                                    ]
+                                }
 
-                            # 添加长文本处理信息
-                            chunk_data["long_text_processing"] = {
-                                "continuation_id": continuation_id,
-                                "current_segment": current_segment,
-                                "total_segments": total_segments
-                            }
+                                # 添加长文本处理信息
+                                chunk_data["long_text_processing"] = {
+                                    "continuation_id": continuation_id,
+                                    "current_segment": current_segment,
+                                    "total_segments": total_segments
+                                }
 
-                            # 发送当前块
-                            yield f"data: {json.dumps(chunk_data)}\n\n"
+                                # 发送当前块
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
 
-                        current_section = "output"
+                            current_section = "output"
 
-                    # 如果数据中包含end标记，表示流处理结束
-                    if data.get("end"):
-                        break
+                        # 如果数据中包含end标记，表示流处理结束
+                        if data.get("end"):
+                            break
 
-                except json.JSONDecodeError:
-                    log_warning(f"[{request_id}] 流式-解析JSON失败: {line[:100]}...")
-                    continue
+                    except json.JSONDecodeError:
+                        log_warning(f"[{request_id}] 流式-解析JSON失败: {line[:100]}...")
+                        continue
 
-            # 存储完整响应用于后续分段
-            complete_response = "".join(output_content)
-            intermediate_results_store.store_response(continuation_id, complete_response)
+                # 存储完整响应用于后续分段
+                complete_response = "".join(output_content)
+                intermediate_results_store.store_response(continuation_id, complete_response)
 
-            # 如果有收集到思维链内容，但尚未发送，作为单独消息发送
-            if thinking_content and current_section == "output":
-                thinking_data = {
+                # 发送最终的结束标记
+                is_complete = intermediate_results_store.is_processing_complete(continuation_id)
+                final_data = {
                     "id": f"chatcmpl-{uuid.uuid4().hex}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
@@ -2126,47 +2138,25 @@ async def generate_stream_with_long_text(
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {"thinking_content": "".join(thinking_content)},
-                            "finish_reason": None
+                            "delta": {},
+                            "finish_reason": "stop" if is_complete else "length"
                         }
                     ],
                     "long_text_processing": {
+                        "completed": is_complete,
                         "continuation_id": continuation_id,
                         "current_segment": current_segment,
-                        "total_segments": total_segments
+                        "total_segments": total_segments,
+                        "next_segment": current_segment + 1 if not is_complete else None
                     }
                 }
-                yield f"data: {json.dumps(thinking_data)}\n\n"
+                yield f"data: {json.dumps(final_data)}\n\n"
 
-            # 发送最终的结束标记
-            is_complete = intermediate_results_store.is_processing_complete(continuation_id)
-            final_data = {
-                "id": f"chatcmpl-{uuid.uuid4().hex}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop" if is_complete else "length"
-                    }
-                ],
-                "long_text_processing": {
-                    "completed": is_complete,
-                    "continuation_id": continuation_id,
-                    "current_segment": current_segment,
-                    "total_segments": total_segments,
-                    "next_segment": current_segment + 1 if not is_complete else None
-                }
-            }
-            yield f"data: {json.dumps(final_data)}\n\n"
+                log_info(f"[{request_id}] 流式生成完成: 处理了{line_count}行, 思维链长度={len(''.join(thinking_content))}, 输出长度={len(''.join(output_content))}, 耗时={time.time() - start_time:.2f}秒")
 
-            log_info(f"[{request_id}] 流式生成完成: 处理了{line_count}行, 思维链长度={len(''.join(thinking_content))}, 输出长度={len(''.join(output_content))}, 耗时={time.time() - start_time:.2f}秒")
-
-            # 释放资源
-            background_tasks.add_task(session_manager.release_request_slot)
-            background_tasks.add_task(request_monitor.decrement_active, True)
+                # 释放资源
+                background_tasks.add_task(session_manager.release_request_slot)
+                background_tasks.add_task(request_monitor.decrement_active, True)
 
     except Exception as e:
         log_error(f"[{request_id}] 流式生成异常: {str(e)}", exc_info=True)
@@ -2208,94 +2198,4 @@ async def cleanup_long_text_sessions():
         await asyncio.sleep(300)  # 每5分钟执行一次
 
 if __name__ == "__main__":
-    # 打印客户端思维链处理的示例JS代码
-    log_info("""
-    客户端处理思维链的JavaScript示例代码:
-    
-    ```javascript
-    // 在客户端处理带有思维链的流式响应
-    function handleStreamResponse(response) {
-        let thinking = "";
-        let output = "";
-        let thinkingMode = false;
-        
-        // 示例: 处理流式响应
-        const reader = response.body.getReader();
-        
-        reader.read().then(function processText({ done, value }) {
-            if (done) {
-                console.log("Stream complete");
-                return;
-            }
-            
-            // 解码数据
-            const chunk = new TextDecoder("utf-8").decode(value);
-            const lines = chunk.split("\\n\\n");
-            
-            lines.forEach(line => {
-                if (line.startsWith("data: ")) {
-                    const data = line.substring(6);
-                    if (data === "[DONE]") {
-                        // 流结束
-                        return;
-                    }
-                    
-                    try {
-                        const parsed = JSON.parse(data);
-                        const delta = parsed.choices[0].delta;
-                        
-                        // 处理思维链开始标记
-                        if (delta.thinking_start) {
-                            thinkingMode = true;
-                            return;
-                        }
-                        
-                        // 处理思维链结束标记
-                        if (delta.thinking_end) {
-                            thinkingMode = false;
-                            return;
-                        }
-                        
-                        // 处理思维链内容
-                        if (delta.thinking_content) {
-                            thinking += delta.thinking_content;
-                            // 可以在UI中以折叠或不同样式显示思维链
-                            updateThinkingUI(thinking);
-                            return;
-                        }
-                        
-                        // 处理普通内容
-                        if (delta.content) {
-                            output += delta.content;
-                            updateOutputUI(output);
-                        }
-                    } catch (e) {
-                        console.error("Error parsing SSE:", e);
-                    }
-                }
-            });
-            
-            // 继续读取
-            return reader.read().then(processText);
-        });
-    }
-
-    // 更新思维链UI
-    function updateThinkingUI(thinking) {
-        const thinkingElement = document.getElementById("thinking-container");
-        if (thinkingElement) {
-            thinkingElement.textContent = thinking;
-        }
-    }
-
-    // 更新输出UI
-    function updateOutputUI(output) {
-        const outputElement = document.getElementById("output-container");
-        if (outputElement) {
-            outputElement.textContent = output;
-        }
-    }
-    ```
-    """)
-    
-    uvicorn.run(app, host="0.0.0.0", port=8647)
+    uvicorn.run("main:app", host="0.0.0.0", port=8647, reload=True)
