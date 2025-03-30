@@ -964,18 +964,17 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
 
         log_info(f"[{request_id}] 收到新请求: model={chat_request.model}, stream={chat_request.stream}, messages_count={len(chat_request.messages)}")
 
-        # 获取认证token
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            log_error(f"[{request_id}] 认证失败: 未提供有效的Authorization header")
+        # 获取cookie (使用新方法)
+        cookie = get_cookie(request)
+        if not cookie:
+            log_error(f"[{request_id}] 认证失败: 未提供有效的cookie")
             request_monitor.decrement_active(success=False)
             session_manager.release_request_slot()
             return Response(
-                content=json.dumps({"error": "未提供有效的Authorization header"}),
+                content=json.dumps({"error": "未提供有效的cookie"}),
                 status_code=401
             )
 
-        cookie = auth_header.replace("Bearer ", "").strip()  # 添加strip()移除前后空格
         log_info(f"[{request_id}] 提取cookie成功，长度: {len(cookie)}")
 
         # 从请求头中提取session-token
@@ -1133,6 +1132,8 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                     user_message = msg.content
                     break
 
+            # 注释掉长文本分段处理逻辑，直接处理全文
+            """
             if user_message and len(user_message) > 6000:
                 # 需要进行长文本分段处理
                 log_info(f"[{request_id}] 检测到长文本，长度: {len(user_message)}，开始分段处理")
@@ -1165,10 +1166,15 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                     "original_length": len(user_message)
                 }
             else:
-                # 标准消息处理
-                full_message = process_messages(chat_request.messages)
-                log_info(f"[{request_id}] 消息处理完成，长度: {len(full_message)}")
-                long_text_info = None
+            """
+            # 标准消息处理 - 直接处理所有消息
+            if user_message and len(user_message) > 6000:
+                log_info(f"[{request_id}] 检测到长文本，长度: {len(user_message)}，跳过分段直接处理全文")
+                
+            full_message = process_messages(chat_request.messages)
+            log_info(f"[{request_id}] 消息处理完成，长度: {len(full_message)}")
+            long_text_info = None
+            continuation_id = None
 
         # 刷新session-token
         await session_token_manager.refresh_token_if_needed()
@@ -1214,6 +1220,8 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                         final_content = await process_non_streaming_response(response)
                         log_info(f"[{request_id}] 响应处理完成，内容长度: {len(final_content)}")
 
+                        # 注释掉长文本处理相关代码
+                        """
                         # 如果是长文本处理，保存当前分段的响应
                         if continuation_id:
                             intermediate_results_store.store_response(continuation_id, final_content)
@@ -1259,6 +1267,7 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                                 background_tasks.add_task(request_monitor.decrement_active, True)
 
                                 return completion
+                        """
 
                         # 处理生成的内容
                         response_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -1287,6 +1296,8 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                             }
                         }
 
+                        # 注释掉长文本处理相关代码
+                        """
                         # 如果这是长文本处理的最后一个分段，添加长文本处理信息
                         if long_text_info:
                             completion["long_text_processing"] = {
@@ -1295,6 +1306,7 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                                 "current_segment": long_text_info["current_segment"],
                                 "total_segments": long_text_info["total_segments"]
                             }
+                        """
 
                         # 请求完成，释放资源
                         background_tasks.add_task(session_manager.release_request_slot)
@@ -1327,9 +1339,10 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
             )
         else:
             # 处理流式请求
+            """
             if continuation_id:
-                # 从会话中获取session_token
-                session_token = session.get("session_token")
+                # 长文本分段流式处理
+                log_info(f"[{request_id}] 开始长文本分段流式处理")
                 return StreamingResponse(
                     generate_stream_with_long_text(
                         request_id, cookie, abacus_request, chat_request.model,
@@ -1338,12 +1351,16 @@ async def chat_completions(request: Request, chat_request: ChatRequest = None, b
                     media_type="text/event-stream"
                 )
             else:
-                # 从会话中获取session_token
-                session_token = session.get("session_token")
-                return StreamingResponse(
-                    generate_stream(request_id, cookie, abacus_request, chat_request.model, background_tasks, session_token),
-                    media_type="text/event-stream"
-                )
+            """
+            # 标准流式处理
+            log_info(f"[{request_id}] 开始标准流式处理")
+            return StreamingResponse(
+                generate_stream(
+                    request_id, cookie, abacus_request, chat_request.model,
+                    background_tasks, session_token
+                ),
+                media_type="text/event-stream"
+            )
     except Exception as e:
         # 处理意外异常
         log_error(f"[{request_id}] 处理请求时发生异常: {str(e)}", exc_info=True)
@@ -2196,6 +2213,35 @@ async def cleanup_long_text_sessions():
             log_error(f"清理长文本会话时出错: {str(e)}", exc_info=True)
 
         await asyncio.sleep(300)  # 每5分钟执行一次
+
+# 添加环境变量设置
+ABACUS_COOKIE = os.environ.get("ABACUS_COOKIE", "")  # 从环境变量中获取Abacus cookie
+
+def get_cookie_from_auth_header(auth_header: str) -> str:
+    """从Authorization header中提取cookie"""
+    if auth_header.startswith("Bearer "):
+        return auth_header.replace("Bearer ", "").strip()
+    return ""
+
+def get_cookie(request: Request) -> str:
+    """
+    获取cookie，按优先级尝试不同来源:
+    1. 环境变量
+    2. Authorization header
+    """
+    # 优先从环境变量获取
+    if ABACUS_COOKIE:
+        log_info("使用环境变量中的cookie，长度: " + str(len(ABACUS_COOKIE)))
+        return ABACUS_COOKIE
+    
+    # 其次从Authorization header获取
+    auth_header = request.headers.get("Authorization", "")
+    cookie = get_cookie_from_auth_header(auth_header)
+    if cookie:
+        log_info("使用Authorization header中的cookie，长度: " + str(len(cookie)))
+        return cookie
+    
+    return ""
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8647, reload=True)
